@@ -1,0 +1,54 @@
+# ===== Telegram (obligatorio) =====
+TELEGRAM_TOKEN=
+TELEGRAM_CHAT_ID=
+
+# ===== Qué escanear =====
+TIMEFRAMES=15m,5m
+QUOTE_ASSETS=USDT
+# 0 = todas las monedas; 500000 descarta solo las más muertas
+MIN_VOLUME_24H_USDT=0
+INCLUDE_REGEX=
+EXCLUDE_REGEX=
+
+# ===== Tu cuenta (solo para sugerir tamaño) =====
+ACCOUNT_USDT=1000
+RISK_PCT=1.0
+MAX_LEV=3
+
+# ===== Señales =====
+SIGNAL_TYPES=G1,G3,G4,G5,G7,G8
+DIRECTION=both
+HTF_MAP=5m:1h,15m:4h
+
+# ===== NUEVO v2: gestión de la operación (igual que tu estrategia de TradingView) =====
+PARTIAL_PCT=50
+TRAIL_MULT=1.0
+USE_TIME_STOP=1
+MAX_BARS=40
+EXIT_ON_OPP=1
+
+# ===== NUEVO v2: seguimiento y avisos =====
+# sigue cada señal y avisa de TP1 / SL / TP2 / cierre
+TRACK_TRADES=1
+# tope de operaciones abiertas a la vez (0 = sin tope)
+MAX_OPEN_TRADES=8
+# /stats /semana /abiertas /estado
+TELEGRAM_COMMANDS=1
+# resumen diario (-1 = desactivado)
+SUMMARY_HOUR_UTC=8
+# 0 = al arrancar no reescanea la vela ya cerrada
+SCAN_ON_START=0
+MAX_SIGNALS_PER_SCAN=15
+
+# ===== Railway: con un Volume montado en /data se conservan estado y estadísticas =====
+# STATE_FILE=/data/state.json
+# TRADES_FILE=/data/trades.json
+
+# ===== Ajuste fino (por defecto = indicador de TradingView) =====
+# REGIME_MODE=ER        # ER | ADX | ER+ADX
+# ER_MIN=0.25
+# USE_DELTA=1
+# USE_PREV_DAY=0
+# COST_MULT=5
+# RATE_LIMIT_RPS=8
+# WORKERS=8
