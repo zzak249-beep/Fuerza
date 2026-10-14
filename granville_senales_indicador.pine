@@ -1,0 +1,191 @@
+//@version=6
+indicator("Granville G1-G8 Señales (mismo motor que el bot BingX)", overlay=true, max_lines_count=100)
+
+// ============================================================
+// INPUTS (mismos nombres y valores por defecto que el bot)
+// ============================================================
+gMA  = "1. Media y señales Granville"
+maLength     = input.int(50, "Longitud de la media", minval=5, group=gMA)
+maType       = input.string("EMA", "Tipo de media", options=["SMA", "EMA"], group=gMA)
+atrLength    = input.int(14, "Longitud ATR", group=gMA)
+strengthMult = input.float(1.2, "Fuerza de vela (x cuerpo medio)", step=0.1, group=gMA)
+devMult      = input.float(2.5, "Distancia extrema a la media (ATR)", step=0.1, group=gMA)
+touchMult    = input.float(0.15, "Tolerancia de toque (ATR)", step=0.05, group=gMA)
+slopeLen     = input.int(3, "Barras para pendiente", minval=1, group=gMA)
+minSlope     = input.float(0.02, "Pendiente mínima (ATR/barra)", step=0.01, group=gMA)
+
+gSig = "2. Qué señales mostrar"
+dirMode    = input.string("Long y Short", "Dirección", options=["Long y Short", "Solo Long", "Solo Short"], group=gSig)
+useCross   = input.bool(true, "G1/G5 Cruces", group=gSig)
+useBounce  = input.bool(true, "G3/G7 Rebotes", group=gSig)
+useExtreme = input.bool(true, "G4/G8 Extremos (capitulación)", group=gSig)
+
+gFil = "3. Filtros: régimen y contexto"
+regimeMode  = input.string("ER", "Régimen de tendencia", options=["ER", "ADX", "ER+ADX"], group=gFil)
+erLen       = input.int(20, "ER: longitud", minval=5, group=gFil)
+erMin       = input.float(0.25, "ER mínimo (cruces/rebotes)", step=0.05, minval=0.0, maxval=1.0, group=gFil)
+adxLen      = input.int(14, "ADX: longitud", minval=2, group=gFil)
+adxMin      = input.float(22, "ADX mínimo", step=1, group=gFil)
+useHtf      = input.bool(true, "Filtro de tendencia en timeframe superior", group=gFil)
+htfTf       = input.timeframe("240", "Timeframe superior (15m→4h, 5m→1h como el bot)", group=gFil)
+htfLen      = input.int(50, "EMA del timeframe superior", minval=5, group=gFil)
+htfSlopeReq = input.bool(false, "Exigir además pendiente de la EMA superior", group=gFil)
+usePrevDay  = input.bool(false, "Nivel día previo (cruces/rebotes)", group=gFil)
+volFloor    = input.float(0.7, "Suelo de volatilidad (ATR vs su media 50)", step=0.05, group=gFil)
+
+gFlow = "4. Filtros: volumen y calidad de vela"
+useVol       = input.bool(true, "Filtro de volumen relativo", group=gFlow)
+rvolMin      = input.float(1.0, "RVOL mínimo cruces/rebotes", step=0.1, group=gFlow)
+climaxMult   = input.float(1.8, "RVOL clímax para extremos", step=0.1, group=gFlow)
+wickPct      = input.float(0.4, "Mecha de rechazo mínima en extremos", step=0.05, minval=0.0, maxval=1.0, group=gFlow)
+bodyRatioMin = input.float(0.55, "Cuerpo/rango mínimo (cruces/rebotes)", step=0.05, minval=0.0, maxval=1.0, group=gFlow)
+useDelta     = input.bool(true, "Delta intrabarra (cruces/rebotes)", group=gFlow)
+ltf          = input.timeframe("1", "Timeframe inferior para delta (< gráfico)", group=gFlow)
+deltaMin     = input.float(0.10, "Delta mínimo (% del volumen)", step=0.05, minval=0.0, maxval=1.0, group=gFlow)
+
+gCost = "5. Filtro de costes"
+costMult = input.float(5.0, "Stop ≥ X veces el coste ida y vuelta (0 = off)", step=0.5, minval=0.0, group=gCost)
+commPct  = input.float(0.05, "Comisión % por lado", step=0.01, group=gCost)
+slipTick = input.int(2, "Slippage (ticks) por lado", minval=0, group=gCost)
+
+gLvl = "6. Niveles sugeridos (último aviso)"
+showLevels  = input.bool(true, "Dibujar entrada / SL / TP del último aviso", group=gLvl)
+slMult      = input.float(1.5, "Stop = ATR x", step=0.1, group=gLvl)
+tp1R        = input.float(1.0, "TP1 en múltiplos de R", step=0.25, group=gLvl)
+longTp2R    = input.float(3.0, "Long: TP2 en R", step=0.25, group=gLvl)
+shortTp2R   = input.float(2.0, "Short: TP2 en R", step=0.25, group=gLvl)
+
+// ============================================================
+// CÁLCULOS BASE
+// ============================================================
+ma     = maType == "SMA" ? ta.sma(close, maLength) : ta.ema(close, maLength)
+atrVal = ta.atr(atrLength)
+slope  = (ma - ma[slopeLen]) / slopeLen / atrVal
+rising  = slope > minSlope
+falling = slope < -minSlope
+
+bodySize     = math.abs(close - open)
+avgBody      = ta.sma(bodySize, 20)
+strongCandle = bodySize > avgBody * strengthMult
+bull = close > open
+bear = close < open
+rng  = high - low
+
+dist     = (close - ma) / atrVal
+tol      = atrVal * touchMult
+stopDist = atrVal * slMult
+
+// Régimen: ER de Kaufman y/o ADX
+erDen  = math.sum(math.abs(close - close[1]), erLen)
+er     = erDen > 0 ? math.abs(close - close[erLen]) / erDen : 0.0
+[_, _, adxVal] = ta.dmi(adxLen, adxLen)
+erOk    = er >= erMin
+adxOk   = adxVal > adxMin
+trendOk = regimeMode == "ER" ? erOk : regimeMode == "ADX" ? adxOk : (erOk and adxOk)
+
+// Timeframe superior sin repintado ([1] + lookahead_on)
+[htfClose, htfMa, htfMaPrev] = request.security(syminfo.tickerid, htfTf,
+     [close[1], ta.ema(close, htfLen)[1], ta.ema(close, htfLen)[2]], lookahead=barmerge.lookahead_on)
+htfBull = not useHtf or (htfClose > htfMa and (not htfSlopeReq or htfMa > htfMaPrev))
+htfBear = not useHtf or (htfClose < htfMa and (not htfSlopeReq or htfMa < htfMaPrev))
+
+// Día previo
+[pdHigh, pdLow] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead=barmerge.lookahead_on)
+pdLongOk  = not usePrevDay or close >= pdHigh
+pdShortOk = not usePrevDay or close <= pdLow
+
+// Volumen
+rvol   = volume / ta.sma(volume, 20)
+rvolOk = not useVol or rvol >= rvolMin
+climax = not useVol or rvol >= climaxMult
+
+// Delta intrabarra
+array<float> ltfDelta = request.security_lower_tf(syminfo.tickerid, ltf,
+     close > open ? volume : close < open ? -volume : 0.0)
+deltaVol     = array.size(ltfDelta) > 0 ? array.sum(ltfDelta) : 0.0
+deltaPct     = volume > 0 ? deltaVol / volume : 0.0
+deltaLongOk  = not useDelta or deltaPct >= deltaMin
+deltaShortOk = not useDelta or deltaPct <= -deltaMin
+
+// Calidad de vela
+bodyRatio = rng > 0 ? bodySize / rng : 0.0
+bodyOk    = bodyRatio >= bodyRatioMin
+lowerWick = math.min(open, close) - low
+upperWick = high - math.max(open, close)
+hammer    = rng > 0 and lowerWick / rng >= wickPct
+shootStar = rng > 0 and upperWick / rng >= wickPct
+
+// Volatilidad y costes
+volOk   = atrVal > ta.sma(atrVal, 50) * volFloor
+costPct = 2 * commPct + 2 * slipTick * syminfo.mintick / close * 100
+stopPct = stopDist / close * 100
+costOk  = costMult <= 0 or stopPct >= costMult * costPct
+
+// ============================================================
+// SEÑALES G1 … G8 (solo con la vela cerrada)
+// ============================================================
+buyCross    = ta.crossover(close, ma) and not falling and strongCandle and bull
+buyBounce   = low <= ma + tol and close > ma and rising and strongCandle and bull and not buyCross
+buyExtreme  = dist < -devMult and not rising and bull and (hammer or strongCandle)
+
+sellCross   = ta.crossunder(close, ma) and not rising and strongCandle and bear
+sellBounce  = high >= ma - tol and close < ma and falling and strongCandle and bear and not sellCross
+sellExtreme = dist > devMult and not falling and bear and (shootStar or strongCandle)
+
+canLong  = dirMode != "Solo Short"
+canShort = dirMode != "Solo Long"
+base     = barstate.isconfirmed and volOk and costOk
+
+contL = trendOk and rvolOk and bodyOk and deltaLongOk and pdLongOk
+contS = trendOk and rvolOk and bodyOk and deltaShortOk and pdShortOk
+
+g1 = base and canLong  and htfBull and useCross   and buyCross    and contL
+g3 = base and canLong  and htfBull and useBounce  and buyBounce   and contL
+g4 = base and canLong  and htfBull and useExtreme and buyExtreme  and climax
+g5 = base and canShort and htfBear and useCross   and sellCross   and contS
+g7 = base and canShort and htfBear and useBounce  and sellBounce  and contS
+g8 = base and canShort and htfBear and useExtreme and sellExtreme and climax
+
+// ============================================================
+// VISUALES
+// ============================================================
+plot(ma, "Media", color=color.new(color.gray, 0), linewidth=2)
+bgcolor(trendOk ? na : color.new(color.gray, 90), title="Régimen lateral")
+
+plotshape(g1, "G1 Cruce alcista",       style=shape.triangleup,   location=location.belowbar, color=color.lime,   size=size.small, text="G1")
+plotshape(g3, "G3 Rebote alcista",      style=shape.triangleup,   location=location.belowbar, color=color.green,  size=size.small, text="G3")
+plotshape(g4, "G4 Sobreventa extrema",  style=shape.circle,       location=location.belowbar, color=color.aqua,   size=size.small, text="G4")
+plotshape(g5, "G5 Cruce bajista",       style=shape.triangledown, location=location.abovebar, color=color.red,    size=size.small, text="G5")
+plotshape(g7, "G7 Rechazo bajista",     style=shape.triangledown, location=location.abovebar, color=color.maroon, size=size.small, text="G7")
+plotshape(g8, "G8 Sobrecompra extrema", style=shape.circle,       location=location.abovebar, color=color.orange, size=size.small, text="G8")
+
+// Niveles del último aviso (entrada orientativa = cierre de la vela de señal)
+sigLong  = g1 or g3 or g4
+sigShort = g5 or g7 or g8
+
+var line lnE  = na
+var line lnSl = na
+var line lnT1 = na
+var line lnT2 = na
+
+if showLevels and (sigLong or sigShort)
+    line.delete(lnE)
+    line.delete(lnSl)
+    line.delete(lnT1)
+    line.delete(lnT2)
+    sgn = sigLong ? 1 : -1
+    tp2R = sigLong ? longTp2R : shortTp2R
+    lnE  := line.new(bar_index, close, bar_index + 30, close, color=color.gray, style=line.style_dotted)
+    lnSl := line.new(bar_index, close - sgn * stopDist, bar_index + 30, close - sgn * stopDist, color=color.red)
+    lnT1 := line.new(bar_index, close + sgn * stopDist * tp1R, bar_index + 30, close + sgn * stopDist * tp1R, color=color.new(color.lime, 30))
+    lnT2 := line.new(bar_index, close + sgn * stopDist * tp2R, bar_index + 30, close + sgn * stopDist * tp2R, color=color.lime)
+
+// ============================================================
+// ALERTAS (por si quieres avisos de un símbolo concreto en TradingView)
+// ============================================================
+alertcondition(g1, "G1 Cruce alcista",       "G1 LONG {{ticker}} {{interval}}")
+alertcondition(g3, "G3 Rebote alcista",      "G3 LONG {{ticker}} {{interval}}")
+alertcondition(g4, "G4 Sobreventa extrema",  "G4 LONG {{ticker}} {{interval}}")
+alertcondition(g5, "G5 Cruce bajista",       "G5 SHORT {{ticker}} {{interval}}")
+alertcondition(g7, "G7 Rechazo bajista",     "G7 SHORT {{ticker}} {{interval}}")
+alertcondition(g8, "G8 Sobrecompra extrema", "G8 SHORT {{ticker}} {{interval}}")
